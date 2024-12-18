@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "mqtt-migration-{{ now | unixEpoch }}"
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  template:
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: OnFailure
+      initContainers:
+      {{- $creds := printf "%s-creds" .Chart.Name }}
+      {{- $postgresHost := include "postgres.host" . }}
+      {{- $postgresPort := include "postgres.port" . }}
+      - name: wait-for-postgres
+        image: {{ .Values.images.postgres.name }}:{{ .Values.images.postgres.tag }}
+        imagePullPolicy: {{ .Values.images.postgres.pullPolicy }}
+        command:
+          - "sh"
+          - "-c"
+          - |
+            until pg_isready -U $POSTGRES_USER -d POSTGRES_DB -h {{ $postgresHost }} -p {{ $postgresPort }}; do
+              echo "Waiting for PostgreSQL to become ready..."
+              sleep 1
+            done
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_PASSWORD"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_USER"
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_DB"
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true       
+      containers:
+      - name: migration
+        image: {{ .Values.images.mqtt.name }}:{{ .Values.images.mqtt.tag  | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.images.mqtt.pullPolicy }}
+        args: ["admin", "migrate", "up"]
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true 
+        env:
+        - name: MQTT_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_DB"
+        - name: MQTT_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_USER"
+        - name: MQTT_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_PASSWORD"
+        - name: MQTT_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_SCHEMA"
+        - name: DB_URL
+          value: "postgres://$(MQTT_ADMIN_USER):$(MQTT_ADMIN_PASSWORD)@{{ $postgresHost }}:{{ $postgresPort }}/$(MQTT_DB)?search_path=$(MQTT_SCHEMA)&sslmode=disable"
+
+

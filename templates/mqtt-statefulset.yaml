@@ -1,0 +1,222 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mqtt
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  serviceName: mqtt-headless
+  replicas: {{ .Values.mqtt.replicaCount }}
+  selector:
+    matchLabels:
+      app: uns
+      component: mqtt
+  template:
+    metadata:
+      labels:
+        app: uns
+        component: mqtt
+        {{- with .Values.podLabels }}
+          {{- toYaml . | nindent 8 }}
+          {{- end }}
+        {{- with .Values.mqtt.labels }}
+          {{- toYaml . | nindent 8 }}
+          {{- end }}  
+      annotations:  
+        checksum/secret: {{ include (print $.Template.BasePath "/tls-secret.yaml") . | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.mqtt.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}       
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "app"
+                      operator: In
+                      values:
+                        - mqtt
+                topologyKey: "kubernetes.io/hostname"
+      initContainers:
+      {{- $creds := printf "%s-creds" .Chart.Name }}
+      {{- $postgresHost := include "postgres.host" . }}
+      {{- $postgresPort := include "postgres.port" . }}
+      - name: wait-for-postgres
+        image: {{ .Values.images.postgres.name }}:{{ .Values.images.postgres.tag }}
+        imagePullPolicy: {{ .Values.images.postgres.pullPolicy }}
+        command:
+          - "sh"
+          - "-c"
+          - |
+            until pg_isready -U $POSTGRES_USER -d POSTGRES_DB -h {{ $postgresHost }} -p {{ $postgresPort }}; do
+              echo "Waiting for PostgreSQL to become ready..."
+              sleep 1
+            done
+            sleep 5
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_PASSWORD"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_USER"
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_DB"    
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true      
+      containers:
+      - name: mqtt
+        image: {{ .Values.images.mqtt.name }}:{{ .Values.images.mqtt.tag  | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.images.mqtt.pullPolicy }}
+        args: {{ if eq (int .Values.mqtt.replicaCount) 1 }}["single", "run"]{{ else }}["cluster", "run"]{{ end }}
+        workingDir: /data
+        ports:
+        - name: gql
+          containerPort: 8080
+        - name: ws
+          containerPort: 1882
+        - name: wss
+          containerPort: 8882
+        - name: mqtt-plain
+          containerPort: 1883
+        - name: mqtt-ssl
+          containerPort: 8883
+        - name: gossip
+          containerPort: 7946
+        - name: raft
+          containerPort: 8946
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+        env:
+        - name: MQTT_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_DB"
+        - name: MQTT_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_USER"
+        - name: MQTT_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_PASSWORD"
+        - name: MQTT_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_SCHEMA"
+        - name: DB_URL
+          value: "postgres://$(MQTT_ADMIN_USER):$(MQTT_ADMIN_PASSWORD)@{{ $postgresHost }}:{{ $postgresPort }}/$(MQTT_DB)?search_path=$(MQTT_SCHEMA)&sslmode=disable"
+        - name: SSL_CERT_KEY
+          value: "/ssl/broker.key"
+        - name: SSL_CERT
+          value: "/ssl/broker.pem"
+        - name: SSL_CA_CHAIN
+          value: "/ssl/broker-ca-chain.pem"
+        - name: SSL_ENABLED
+          value: "true"
+        - name: MQTT_API_CONFIG_ENABLE
+          value: "false"
+        - name: REDIS_ENABLED
+          value: "true"
+        - name: REDIS_ADDR
+          value: 'redis.{{ .Release.Namespace }}.svc.cluster.local:6379'
+        - name: KEYCLOAK_URL
+          value: "http://keycloak.{{ .Release.Namespace }}.svc.cluster.local:8080/auth"
+        - name: KEYCLOAK_REALM
+          value: "{{ .Values.keycloak.realm }}"  
+        - name: CLUSTER_GRPC_ENABLE
+          value: "true"  
+        - name: CONFIG_MQTT_TCP_PORT
+          value: "{{ .Values.service.ports.mqtt }}"
+        - name: CONFIG_MQTT_SSL_PORT
+          value: "{{ .Values.service.ports.mqtts }}"
+        - name: CONFIG_MQTT_WS_PORT
+          value: "{{ .Values.service.ports.mqttWs }}"
+        - name: CONFIG_MQTT_WSS_PORT
+          value: "{{ .Values.service.ports.mqttsWs }}"
+        - name: BUILD_VERSION
+          value: "{{ .Chart.AppVersion }}"
+        - name: CLUSTER_MEMBERS_DNS
+          value: "mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local"
+        - name: CLUSTER_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name    
+        - name: CLUSTER_RAFT_DIR
+          value: "/raft/"
+        - name: TMP_MODE
+          value: "{{ if eq (int .Values.mqtt.replicaCount) 1 }}single{{ else }}cluster{{ end }}"
+        - name: REDIS_TOPICS_TTL
+          value: "{{ .Values.mqtt.redisTopicsTTL }}"
+        - name: IDE_LOG_LEVEL
+          value: "{{ .Values.mqtt.logLevel }}"
+        volumeMounts:
+        - name: ssl-cert
+          mountPath: /ssl
+          readOnly: true
+        - name: raft-data
+          mountPath: /raft
+        - name: tmpdir
+          subPath: "tmp"
+          mountPath: "/tmp"
+        - name: tmpdir
+          subPath: "data"
+          mountPath: "/data"
+      volumes:
+      - name: ssl-cert
+        secret:
+          secretName: {{ .Values.luns.tlsSecretName }}
+          items:
+          - key: tls.crt
+            path: broker.pem
+          - key: tls.key
+            path: broker.key
+          - key: ca.crt
+            path: ca.pem
+          - key: tls.crt
+            path: broker-ca-chain.pem
+      - name: tmpdir
+        emptyDir:
+          sizeLimit: "500Mi"    
+      
+  volumeClaimTemplates:
+   - metadata:
+      name: raft-data
+     spec:
+       accessModes: [ "ReadWriteOnce" ]
+       resources:
+         requests:
+           storage: 100Mi

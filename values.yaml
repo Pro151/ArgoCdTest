@@ -1,0 +1,164 @@
+# Default values for litmus-uns.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+images:
+  keycloak:
+    name: "us-east1-docker.pkg.dev/litmus-public/tahoe-dev/tahoe-keycloak"
+    tag: ""
+    pullPolicy: IfNotPresent
+  mqtt:
+    name: "us-east1-docker.pkg.dev/litmus-public/tahoe-dev/tahoe-mqtt"
+    tag: ""
+    pullPolicy: IfNotPresent
+  webui:
+    name: "us-east1-docker.pkg.dev/litmus-public/tahoe-dev/tahoe-webui"
+    tag: ""
+    pullPolicy: IfNotPresent
+  postgres:
+    name: "postgres"
+    tag: "16.1"
+    pullPolicy: IfNotPresent
+  redis:
+    name: "redis"
+    tag: "7.2.4-alpine3.19"
+    pullPolicy: IfNotPresent
+  haproxy:
+    name: "haproxy"
+    tag: "2.8.9"
+    pullPolicy: IfNotPresent
+  curl:
+    name: "curlimages/curl"
+    tag: "8.7.1"
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+secrets:
+  create: true
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+ingress:
+  enabled: false
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  host: uns.local
+  tls:
+    secretName: "luns-default-tls"
+  
+service:
+  type: LoadBalancer
+  annotations: {}
+  ports:
+    http: 80
+    https: 443
+    mqtt: 1883
+    mqtts: 8883
+    mqttWs: 1882
+    mqttsWs: 8882
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podLabels: {}
+podAnnotations: {}
+
+luns:
+  createTlsSecret: true
+  tlsSecretName: "luns-default-tls"
+  tls:
+    ttl: 390
+    altNames:
+      - "uns.local"
+    ipList:
+      - "127.0.0.1"
+
+postgres:
+  enabled: true
+  storage:
+    size: "10Gi"
+  annotations:
+    k8up.syn.tools/backup: "true"
+    k8up.io/backupcommand: sh -c 'PGUSER="$POSTGRES_USER" PGPASSWORD="$POSTGRES_PASSWORD" pg_dumpall --clean'
+    k8up.io/file-extension: .sql
+  external:
+    enabled: false
+    host: "postgres.local"
+    port: 5432
+    secretName: ext-db-creds
+  labels: {}
+
+redis:
+  storage:
+    size: "10Gi"
+  labels: {}
+  annotations: {} 
+
+mqtt:
+  replicaCount: 3
+  redisTopicsTTL: "24h"
+  logLevel: "info"
+  labels: {}
+  annotations: {}
+
+keycloak:
+  realm: "standalone"
+  resources:
+    requests:
+      cpu: "0.05"
+      memory: "600Mi"
+      ephemeral-storage: "100Mi"
+    limits:
+      cpu: "1"
+      memory: "700Mi"
+    ephemeral-storage: "500Mi"
+  labels: {}
+  annotations: {}  
+
+haproxy:
+  replicaCount: 2
+  mqttDefaultBackendCount: 10
+  labels: {}
+  annotations: {}
+
+webui:
+  labels: {}
+  annotations: {}
+
+

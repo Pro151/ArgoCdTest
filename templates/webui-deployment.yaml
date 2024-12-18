@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webui
+  namespace: {{ .Release.Namespace | quote }}  
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uns
+      component: webui
+  template:
+    metadata:
+      labels:
+        app: uns
+        component: webui
+      {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.webui.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}    
+      annotations:  
+        checksum/secret: {{ include (print $.Template.BasePath "/tls-secret.yaml") . | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.webui.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}     
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+      - name: wait-for-service
+        image: {{ .Values.images.curl.name }}:{{ .Values.images.curl.tag }}
+        imagePullPolicy: {{ .Values.images.curl.pullPolicy }}
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            until curl --output /dev/null --silent --head --fail http://haproxy.{{ .Release.Namespace }}.svc.cluster.local:8080/api/v1/ready; do
+              echo "Waiting for mqtt service to be ready..."
+              sleep 5
+            done
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      containers:
+      - name: webui
+        image: {{ .Values.images.webui.name }}:{{ .Values.images.webui.tag  | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.images.webui.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: https
+          containerPort: 8443
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL  
+        env:
+          - name: "KEYCLOAK_SERVER"
+            value: "http://keycloak.{{ .Release.Namespace }}.svc.cluster.local:8080"
+          - name: "MQTT_API_SERVER"
+            value: "http://haproxy.{{ .Release.Namespace }}.svc.cluster.local:8080"
+          - name: "MQTT_WS_SERVER"
+            value: "http://haproxy.{{ .Release.Namespace }}.svc.cluster.local:1882"
+          - name: "HTTP_PORT"
+            value: "8080"
+          - name: "HTTPS_PORT"
+            value: "8443"
+          - name: "KEYCLOAK_PROXY_SCHEME"
+            value: "https"
+          - name: "NGINX_ENVSUBST_TEMPLATE_DIR" 
+            value: {{ if .Values.ingress.enabled }}"/etc/nginx/http-templates"{{ else }}"/etc/nginx/templates"{{ end }}
+          - name: "KEYCLOAK_PROXY_HOST"
+            value: {{ if .Values.ingress.enabled }}{{ .Values.ingress.host | quote }}{{ else }}'$host'{{ end }}
+          - name: "KEYCLOAK_PROXY_PORT"
+            value: {{ if .Values.ingress.enabled }}"443"{{ else }}{{ .Values.service.ports.https | quote }}{{ end }}
+        volumeMounts:
+        - name: ssl-cert
+          mountPath: /etc/nginx/ssl/broker.pem
+          subPath: broker.pem
+          readOnly: true
+        - name: ssl-cert
+          mountPath: /etc/nginx/ssl/broker.key
+          subPath: broker.key
+          readOnly: true
+        - name: ssl-cert
+          mountPath: /etc/nginx/ssl/ca.pem
+          subPath: ca.pem
+          readOnly: true
+        - name: ssl-cert
+          mountPath: /etc/nginx/ssl/broker-ca-chain.pem
+          subPath: broker-ca-chain.pem
+          readOnly: true
+        - name: tmpdir
+          subPath: "var/run"
+          mountPath: "/var/run"
+        - name: tmpdir
+          subPath: "conf.d"
+          mountPath: "/etc/nginx/conf.d"
+        - name: tmpdir
+          subPath: "cache"
+          mountPath: "/var/cache/nginx"  
+      volumes:
+      - name: ssl-cert
+        secret:
+          secretName: {{ .Values.luns.tlsSecretName }}
+          items:
+          - key: tls.crt
+            path: broker.pem
+          - key: tls.key
+            path: broker.key
+          - key: ca.crt
+            path: ca.pem
+          - key: tls.crt
+            path: broker-ca-chain.pem 
+      - name: tmpdir
+        emptyDir:
+          sizeLimit: "1G"       

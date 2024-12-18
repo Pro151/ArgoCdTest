@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace | quote }}  
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uns
+      component: keycloak
+  template:
+    metadata:
+      labels:
+        app: uns
+        component: keycloak
+      {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.keycloak.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.keycloak.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}   
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      {{- $creds := printf "%s-creds" .Chart.Name }}
+      {{- $postgresHost := include "postgres.host" . }}
+      {{- $postgresPort := include "postgres.port" . }}  
+      - name: wait-for-postgres
+        image: {{ .Values.images.postgres.name }}:{{ .Values.images.postgres.tag }}
+        imagePullPolicy: {{ .Values.images.postgres.pullPolicy }}
+        command:
+          - "sh"
+          - "-c"
+          - |
+            until pg_isready -U $POSTGRES_USER -d POSTGRES_DB -h {{ $postgresHost }} -p {{ $postgresPort }}; do
+              echo "Waiting for PostgreSQL to become ready..."
+              sleep 1
+            done
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_PASSWORD"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_USER"
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_DB"    
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+      containers:
+      - name: keycloak
+        image: {{ .Values.images.keycloak.name }}:{{ .Values.images.keycloak.tag  | default .Chart.AppVersion }}
+        imagePullPolicy: {{ .Values.images.keycloak.pullPolicy }}
+        args: ["start", "--optimized", "--import-realm", "--metrics-enabled=true"]
+        ports:
+        - containerPort: 8080
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "{{ .Values.keycloak.resources.requests.cpu }}"
+            memory: "{{ .Values.keycloak.resources.requests.memory }}"
+          limits:
+            cpu: "{{ .Values.keycloak.resources.limits.cpu }}"
+            memory: "{{ .Values.keycloak.resources.limits.memory }}"
+        env:
+        - name: "KEYCLOAK_ADMIN"
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: KEYCLOAK_ADMIN_USER
+        - name: "KEYCLOAK_ADMIN_PASSWORD"
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_ADMIN_PASSWORD"
+        - name: KC_DB_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_SCHEMA"
+        - name: KC_DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: KEYCLOAK_USER
+        - name: "KC_DB_PASSWORD"
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_PASSWORD"
+        - name: KC_DB_URL_PORT
+          value: {{ $postgresPort | quote }} 
+        - name: KC_DB_URL_HOST
+          value: {{ $postgresHost | quote }}
+        - name: KC_DB_URL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_DB"
+        volumeMounts:
+        - name: tmpdir
+          subPath: "tmp"
+          mountPath: "/tmp"
+        - name: tmpdir
+          subPath: "data/tmp"
+          mountPath: "/opt/keycloak/data/tmp"      
+      volumes:
+      - name: tmpdir
+        emptyDir:
+          sizeLimit: "500Mi"

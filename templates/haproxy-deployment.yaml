@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haproxy
+spec:
+  replicas: {{ .Values.haproxy.replicaCount }}
+  selector:
+    matchLabels:
+      app: uns
+      component: haproxy
+  template:
+    metadata:
+      labels:
+        app: uns
+        component: haproxy
+      {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.haproxy.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}    
+      annotations:  
+        checksum/config: {{ include (print $.Template.BasePath "/haproxy-config.yaml") . | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.haproxy.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}      
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: "app"
+                      operator: In
+                      values:
+                        - haproxy
+                topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: haproxy
+        image: {{ .Values.images.haproxy.name }}:{{ .Values.images.haproxy.tag }}
+        imagePullPolicy: {{ .Values.images.haproxy.pullPolicy }}
+        ports:
+        - containerPort: 8080
+        - containerPort: 8443
+        - containerPort: 1883
+        - containerPort: 8883
+        - containerPort: 8081
+        - containerPort: 8404
+        - containerPort: 8405
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: config-volume
+          mountPath: /usr/local/etc/haproxy
+        args:
+          - -f
+          - /usr/local/etc/haproxy/haproxy.cfg
+      volumes:
+      - name: config-volume
+        configMap:
+          name: haproxy-config

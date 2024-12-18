@@ -1,0 +1,124 @@
+{{- if .Values.postgres.external.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "extdb-init-{{ now | unixEpoch }}"
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    "helm.sh/hook-delete-policy": "hook-succeeded"
+spec:
+  template:
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: OnFailure
+      initContainers:
+      {{- $creds := printf "%s-creds" .Chart.Name }}
+      {{- $postgresHost := include "postgres.host" . }}
+      {{- $postgresPort := include "postgres.port" . }}
+      - name: wait-for-postgres
+        image: {{ .Values.images.postgres.name }}:{{ .Values.images.postgres.tag }}
+        imagePullPolicy: {{ .Values.images.postgres.pullPolicy }}
+        command:
+          - "sh"
+          - "-c"
+          - |
+            until pg_isready -U $POSTGRES_USER -h {{ $postgresHost }} -p {{ $postgresPort }}; do
+              echo "Waiting for PostgreSQL to become ready..."
+              sleep 1
+            done
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.external.secretName }}
+              key: "POSTGRES_PASSWORD"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.external.secretName }}
+              key: "POSTGRES_USER"
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true         
+      containers:
+      - name: extdb-init
+        image: {{ .Values.images.postgres.name }}:{{ .Values.images.postgres.tag }}
+        imagePullPolicy: {{ .Values.images.postgres.pullPolicy }}
+        command:
+          - "/bin/bash"
+          - "/scripts/extdb-init.sh"
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true   
+        env:
+        - name: POSTGRES_HOST
+          value: {{ $postgresHost | quote }}
+        - name: POSTGRES_PORT
+          value: {{ $postgresPort | quote }}  
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.external.secretName }}
+              key: "POSTGRES_USER"
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgres.external.secretName }}
+              key: "POSTGRES_PASSWORD"
+        - name: KEYCLOAK_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_DB"
+        - name: MQTT_DB
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_DB"
+        - name: MQTT_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_USER"
+        - name: MQTT_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_ADMIN_PASSWORD"
+        - name: MQTT_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "MQTT_SCHEMA"
+        - name: KEYCLOAK_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_USER"
+        - name: KEYCLOAK_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_PASSWORD"
+        - name: KEYCLOAK_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: {{ $creds }}
+              key: "KEYCLOAK_SCHEMA"      
+        volumeMounts:
+        - mountPath: /scripts
+          name: extdb-init-script
+      volumes:
+      - name: extdb-init-script
+        configMap:
+          name: extdb-init-script      
+{{- end }}

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: extdb-init-script
+data:
+  extdb-init.sh: |
+    {{- .Files.Get "files/extdb-init.sh" | nindent 4 }}
+

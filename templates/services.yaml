@@ -1,0 +1,264 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: uns
+    component: postgres
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: uns
+    component: redis
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}  
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: keycloak
+  selector:
+    app: uns
+    component: keycloak
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-headless
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}  
+spec:
+  clusterIP: None
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: gql
+  - port: 1882
+    targetPort: 1882
+    protocol: TCP
+    name: ws
+  - port: 8882
+    targetPort: 8882
+    protocol: TCP
+    name: wss
+  - port: 7946
+    targetPort: 7946
+    protocol: TCP
+    name: gossip
+  - port: 7946
+    targetPort: 7946
+    protocol: UDP
+    name: gossip-udp
+  - port: 8946
+    targetPort: 8946
+    protocol: TCP
+    name: raft
+  - port: 1883
+    targetPort: 1883
+    protocol: TCP
+    name: mqtt-plain
+  - port: 8883
+    targetPort: 8883
+    protocol: TCP
+    name: mqtt-ssl
+  selector:
+    app: uns
+    component: mqtt
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}  
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: gql
+  - port: 1882
+    targetPort: 1882
+    protocol: TCP
+    name: ws
+  - port: 8882
+    targetPort: 8882
+    protocol: TCP
+    name: wss
+  - port: 1883
+    targetPort: 1883
+    protocol: TCP
+    name: mqtt-plain
+  - port: 8883
+    targetPort: 8883
+    protocol: TCP
+    name: mqtt-ssl    
+  selector:
+    app: uns
+    component: mqtt
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webui-svc
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 8443
+    protocol: TCP
+    name: https
+  selector:
+    app: uns
+    component: webui
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "tahoe-mqtt"
+  namespace: {{ .Release.Namespace | quote }}  
+  labels:
+    {{- include "litmus-uns.labels" . | nindent 4 }}  
+spec:
+  type: ExternalName
+  externalName: "mqtt.{{ .Release.Namespace }}.svc.cluster.local"
+
+{{- if .Values.ingress.enabled -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litmus-uns
+  annotations: {{- with .Values.service.annotations }}
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - name: mqtt
+    port: {{ .Values.service.ports.mqtt }}
+    targetPort: 1883
+  - name: mqtts
+    port: {{ .Values.service.ports.mqtts }}
+    targetPort: 8883
+  - name: mqtt-ws
+    port: {{ .Values.service.ports.mqttWs }}
+    targetPort: 1882
+  - name: mqtts-ws
+    port: {{ .Values.service.ports.mqttsWs }}
+    targetPort: 8882  
+  selector:
+    app: uns
+    component: haproxy
+{{- else }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litmus-uns
+  annotations: {{- with .Values.service.annotations }}
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - name: http
+    port: {{ .Values.service.ports.http }}
+    targetPort: 8080
+  - name: https
+    port: {{ .Values.service.ports.https }}
+    targetPort: 8443
+  - name: mqtt
+    port: {{ .Values.service.ports.mqtt }}
+    targetPort: 1883
+  - name: mqtts
+    port: {{ .Values.service.ports.mqtts }}
+    targetPort: 8883
+  - name: mqtt-ws
+    port: {{ .Values.service.ports.mqttWs }}
+    targetPort: 1882
+  - name: mqtts-ws
+    port: {{ .Values.service.ports.mqttsWs }}
+    targetPort: 8882  
+  selector:
+    app: uns
+    component: haproxy
+{{- end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: https
+    port: 443
+    targetPort: 8443
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+  - name: mqtts
+    port: 8883
+    targetPort: 8883
+  - name: gql
+    port: 8080
+    targetPort: 8081
+  - name: ws
+    port: 1882
+    targetPort: 1882  
+  selector:
+    app: uns
+    component: haproxy

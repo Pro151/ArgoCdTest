@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0
+      maxconn 1000
+
+    defaults
+      mode tcp
+      log global
+      timeout connect 5000ms
+      timeout client 120s
+      timeout server 120s
+
+    resolvers k8s
+      parse-resolv-conf
+      accepted_payload_size 8192
+      hold valid 10s
+
+    frontend stats
+      mode http
+      bind *:8404
+      stats enable
+      stats uri /
+      stats refresh 5s
+      stats admin if LOCALHOST
+
+    frontend prometheus
+      bind :8405
+      mode http
+      http-request use-service prometheus-exporter
+      no log
+
+    frontend http-in
+      bind *:8080
+      default_backend web-ui-http
+
+    frontend https-in
+      bind *:8443
+      default_backend web-ui-https
+
+    frontend mqtt-in
+      bind *:1883
+      default_backend mqtt
+
+    frontend mqtts-in
+      bind *:8883
+      default_backend mqtts
+
+    frontend gql-in
+      bind *:8081
+      default_backend gql
+
+    frontend ws-in
+      bind *:1882
+      default_backend ws
+
+    backend web-ui-http
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server web-ui-http webui-svc.{{ .Release.Namespace }}.svc.cluster.local:80 check
+    
+    backend web-ui-https
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server web-ui-https webui-svc.{{ .Release.Namespace }}.svc.cluster.local:443 check 
+
+{{- $replicaCount := .Values.mqtt.replicaCount }}
+{{- $defaultBackendCount := .Values.haproxy.mqttDefaultBackendCount }}
+{{- $backendCount := max $replicaCount $defaultBackendCount }}
+
+    backend mqtt
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server-template mqtt-plain {{ $backendCount }} _mqtt-plain._tcp.mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local:8080 check resolvers k8s init-addr last,libc,none inter 1s
+      
+    backend mqtts
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server-template mqtt-ssl {{ $backendCount }} _mqtt-ssl._tcp.mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local:8080 check resolvers k8s init-addr last,libc,none inter 1s
+
+    backend gql
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server mqtt-gql-base mqtt-0.mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local:8080 check resolvers k8s init-addr last,libc,none inter 1s
+      server-template mqtt-gql {{ $backendCount }} _gql._tcp.mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local:8080 check resolvers k8s init-addr last,libc,none inter 1s backup
+
+    backend ws
+      mode tcp
+      balance roundrobin
+      option tcp-check
+      server-template mqtt-ws {{ $backendCount }} mqtt-headless.{{ .Release.Namespace }}.svc.cluster.local:1882 check resolvers k8s init-addr last,libc,none inter 1s

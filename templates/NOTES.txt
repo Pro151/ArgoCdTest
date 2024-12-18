@@ -1,0 +1,66 @@
+Thank you for installing the Litmus UNS chart.
+
+1. Get the Litmus UNS URL:
+
+{{- if .Values.ingress.enabled }}
+
+  You should be able to access your new Litmus UNS installation through
+
+  https://{{- .Values.ingress.host }}/
+
+  Keycloak Admin URL 
+
+  https://{{- .Values.ingress.host }}/auth/admin
+
+  MQTT URLs
+
+  {{- if contains "LoadBalancer" .Values.service.type }}
+     export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} litmus-uns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+     echo "MQTT : mqtt://$SERVICE_IP:{{ .Values.service.ports.mqtt }}"
+     echo "MQTTS : mqtt://$SERVICE_IP:{{ .Values.service.ports.mqtts }}"
+  {{- end }}
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc --namespace {{ .Release.Namespace }} -w litmus-uns'
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} litmus-uns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+{{- $port:=.Values.service.ports.https | toString }}
+  echo "Litmus UNS URL: https://$SERVICE_IP{{- if ne $port "443" }}:{{ .Values.service.ports.https }}{{ end }}/"
+  echo "Litmus UNS URL: https://$SERVICE_IP{{- if ne $port "443" }}:{{ .Values.service.ports.https }}{{ end }}/auth/admin"
+  echo "MQTT : mqtt://$SERVICE_IP:{{ .Values.service.ports.mqtt }}"
+  echo "MQTTS : mqtt://$SERVICE_IP:{{ .Values.service.ports.mqtts }}"
+
+{{- else if contains "ClusterIP"  .Values.service.type }}
+
+  echo "Keycloak Admin URL: http://127.0.0.1:8080/auth/admin"
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/litmus-uns 8080:{{ .Values.service.ports.https }}
+
+{{- end }}
+
+{{- if contains "NodePort" .Values.service.type }}
+
+  Or running:
+
+  export NODE_PORT_HTTPS=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[1].nodePort}" services litmus-uns)
+  export NODE_PORT_MQTT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[2].nodePort}" services litmus-uns)
+  export NODE_PORT_MQTTS=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[3].nodePort}" services litmus-uns)
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "Litmus UNS URL: http://$NODE_IP:$NODE_PORT_HTTPS/"
+  echo "Keycloak Admin URL: http://$NODE_IP:$NODE_PORT_HTTPS/"
+  echo "MQTT ({{ .Values.service.ports.mqtt }}): mqtt://$NODE_IP:$NODE_PORT_MQTT"
+  echo  "MQTTS ({{ .Values.service.ports.mqtts }}): mqtts://$NODE_IP:$NODE_PORT_MQTT"
+
+{{- end }}
+
+2. Login Litmus UNS WebUI with the following credentials
+
+  echo Litmus UNS Username: admin
+  echo Litmus UNS Password: admin
+
+3. Login Litmus UNS Keycloak UI
+
+  echo Keycloak Admin Username: $(kubectl get secret --namespace {{ .Release.Namespace }} {{ printf "%s-creds" .Chart.Name }} -o jsonpath="{.data.KEYCLOAK_ADMIN_USER}" | base64 --decode)
+  echo Keycloak Admin Password: $(kubectl get secret --namespace {{ .Release.Namespace }} {{ printf "%s-creds" .Chart.Name }} -o jsonpath="{.data.KEYCLOAK_ADMIN_PASSWORD}" | base64 --decode)
